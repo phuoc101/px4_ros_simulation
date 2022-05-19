@@ -1,6 +1,7 @@
 # ROS2 imports
 import rclpy
 from rclpy.node import Node
+from rclpy.logging import LoggingSeverity
 from transforms3d.euler import quat2euler
 from sensor_msgs.msg import Image
 from px4_msgs.msg import Timesync
@@ -15,7 +16,7 @@ from cv2 import aruco
 from cv_bridge import CvBridge
 # Common lib imports
 import numpy as np
-import numpy.linalg as LA
+import numpy.linalg as la
 import time
 import sys
 
@@ -23,9 +24,10 @@ import sys
 class FlyDrone(Node):
     def __init__(self):
         super().__init__('takeoffAndLand')
+        self.get_logger().set_level(LoggingSeverity.INFO)
         # control parameters
-        self.k_landing = 3
-        self.k_gtg = 2 
+        self.k_landing = 2
+        self.k_gtg = 1
         self.Ts = 0.1  # seconds
         self.flytime = 10
         # status flags for control loop
@@ -40,10 +42,10 @@ class FlyDrone(Node):
         self.LAND = False
         self.END = False
         self.timestamp = 0
-        self.odom = np.array([0., 0., 0., 0.], np.float32)
-        self.takeoff_point = np.array([0., 0., -5., 0.], np.float32)
+        self.odom = np.array([0., 0., 0.], np.float32)
+        self.takeoff_point = np.array([0., 0., -5.], np.float32)
         self.path = np.array(
-            [[0., 10., -5., 0.], [1., 2., -3., 0.], self.takeoff_point],
+            [[0., 10., -5.], [1., 2., -3.], self.takeoff_point],
             np.float32)
         # self.path = np.array([self.takeoffPoint], np.float32)
         # self.path = np.array(
@@ -67,7 +69,7 @@ class FlyDrone(Node):
             Timesync, '/fmu/timesync/out', self.timesync_callback, 10)
         self.vehicleStatusSub = self.create_subscription(
             VehicleControlMode, '/fmu/vehicle_control_mode/out',
-            self.vehicleStatus_callback, 10)
+            self.vehicle_status_callback, 10)
         self.odomSub = self.create_subscription(
             VehicleOdometry, '/fmu/vehicle_odometry/out',
             self.odom_callback, 10)
@@ -76,13 +78,13 @@ class FlyDrone(Node):
         """
         ROS2 PUBLISHERS
         """
-        self.vehicleCmdPub = self.create_publisher(
+        self.vehicle_cmd_pub = self.create_publisher(
             VehicleCommand, '/fmu/vehicle_command/in', 10)
-        self.offboardCtrlPub = self.create_publisher(
+        self.offboard_ctrl_pub = self.create_publisher(
             OffboardControlMode, 'fmu/offboard_control_mode/in', 10)
         # self.setpointPub = self.create_publisher(
         # TrajectorySetpoint, '/safety_check', 10)
-        self.setpointPub = self.create_publisher(
+        self.setpoint_pub = self.create_publisher(
             TrajectorySetpoint, '/fmu/trajectory_setpoint/in', 10)
         self.timer = self.create_timer(self.Ts, self.timer_callback)
 
@@ -132,7 +134,7 @@ class FlyDrone(Node):
             self.landing()
         else:
             if np.abs(self.odom[2]) < 0.1:
-                print("exiting...")
+                self.get_logger().info("landed, exiting...")
                 time.sleep(1)
                 sys.exit()
 
@@ -142,92 +144,88 @@ class FlyDrone(Node):
         """
         # publish offboard control mode constantly to keep drone in offboard
         # mode
-        self.publishOffboardControlMode()
-        nextPoint = self.odom.copy()
-        self.publishSetpoint(nextPoint)
+        self.publish_offboard_control_mode()
+        next_point = self.odom.copy()
+        self.publish_setpoint(next_point)
         if self.aruco_cen[0] != -1:
-            eastOffset = 1/self.img_sz[0]*(self.aruco_cen[0]-self.frame_cen[0])
-            northOffset = 1/self.img_sz[1]*(self.frame_cen[1]-self.aruco_cen[1])
-            offset = np.array([northOffset, eastOffset], np.float32)
-            # offset = offset/LA.norm(offset)
+            east_offset = 1/self.img_sz[0]*(self.aruco_cen[0]-self.frame_cen[0])
+            north_offset = 1/self.img_sz[1]*(self.frame_cen[1]-self.aruco_cen[1])
+            offset = np.array([north_offset, east_offset], np.float32)
             self.timeout_cnt = 0
             if np.abs(self.odom[2]) > 1:
-                print(f"odom current {self.odom}")
-                # nextPoint[1] += self.kLanding*eastOffset
-                # nextPoint[0] += self.kLanding*northOffset
-                nextPoint[0:2] += self.k_landing * offset
-                print(
-                    f"offset {offset}")
-                print(f"frame cen {self.frame_cen}")
-                print(f"aruco cen {self.aruco_cen}")
-                if LA.norm(offset) >= self.landing_tolerance:
-                    self.publishSetpoint(nextPoint)
+                self.get_logger().debug(f"odom current {self.odom}")
+                next_point[0:2] += self.k_landing * offset
+                self.get_logger().debug(f"offset {offset}")
+                self.get_logger().debug(f"frame cen {self.frame_cen}")
+                self.get_logger().debug(f"aruco cen {self.aruco_cen}")
+                if la.norm(offset) >= self.landing_tolerance:
+                    self.publish_setpoint(next_point)
                 else:
-                    nextPoint[2] += 0.2
-                    print("Moving down")
-                    self.publishSetpoint(nextPoint)
+                    next_point[2] += 0.2
+                    self.get_logger().debug("Moving down")
+                    self.publish_setpoint(next_point)
             else:
-                self.publishVehicleCmd(
+                self.publish_vehicle_cmd(
                     VehicleCommand.VEHICLE_CMD_NAV_LAND, 0.0, 0.0)
-                print('published command LAND, byeeeee')
+                self.get_logger().info('published command LAND')
                 self.END = True
         else:
-            print("No Aruco found, waiting")
+            self.get_logger().warning("No Aruco found, waiting")
             self.timeout_cnt += 1
             if self.timeout_cnt == 100:
-                print("timeout, landing")
-                self.publishVehicleCmd(
+                self.get_logger().warning("timeout, landing")
+                self.publish_vehicle_cmd(
                     VehicleCommand.VEHICLE_CMD_NAV_LAND, 0.0, 0.0)
-                print('published command LAND, byeeeee')
+                self.get_logger().info('published command LAND, byeeeee')
                 self.END = True
             else:
-                self.publishSetpoint(nextPoint)
+                self.publish_setpoint(next_point)
 
     def control(self):
-        self.publishOffboardControlMode()
+        self.publish_offboard_control_mode()
         if not self.ARMED:
             # switch to offboard control
-            self.publishVehicleCmd(
+            self.publish_vehicle_cmd(
                 VehicleCommand.VEHICLE_CMD_DO_SET_MODE, 1., 6.)
             # arm drone
-            self.publishVehicleCmd(
+            self.publish_vehicle_cmd(
                 VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.0)
-            print("ARMED cmd sent")
+            self.get_logger().debug("ARMED cmd sent")
         elif not self.START and self.ARMED and not self.FOLLOW:
             self.START = True
-            print("Taking off")
-        elif self.START and LA.norm(self.takeoff_point - self.odom) > \
+            self.get_logger().info("Taking off")
+        elif self.START and la.norm(self.takeoff_point - self.odom) > \
                 self.tolerance:
             # takeoff
             # self.publishSetpoint(self.takeoffPoint)
-            self.publishSetpoint(self.goToGoal(
-                goalSetpoint=self.takeoff_point, k=self.k_gtg))
-        elif not self.FOLLOW and LA.norm(self.takeoff_point - self.odom) < \
+            self.publish_setpoint(self.go_to_goal(
+                goal_setpoint=self.takeoff_point, k=self.k_gtg))
+        elif not self.FOLLOW and la.norm(self.takeoff_point - self.odom) < \
                 self.tolerance:
             self.START = False
             self.FOLLOW = True
-            print("following path")
-            print(f"next setpoint: {self.path[self.path_cnt]}")
+            self.get_logger().info("following path")
+            self.get_logger().info(f"next setpoint: {self.path[self.path_cnt]}")
         elif self.path_cnt < len(self.path) and self.FOLLOW:
             # self.publishSetpoint(self.path[self.pathCnt])
-            if LA.norm(self.odom - self.path[self.path_cnt]) < self.tolerance:
+            if la.norm(self.odom - self.path[self.path_cnt]) < self.tolerance:
                 self.path_cnt += 1
                 if self.path_cnt < len(self.path):
-                    print(f"next setpoint: {self.path[self.path_cnt]}")
+                    self.get_logger().info(f"next setpoint: {self.path[self.path_cnt]}")
             else:
-                self.publishSetpoint(self.goToGoal(
-                    goalSetpoint=self.path[self.path_cnt], k=self.k_gtg))
+                self.publish_setpoint(self.go_to_goal(
+                    goal_setpoint=self.path[self.path_cnt], k=self.k_gtg))
         elif self.path_cnt == len(self.path) and not self.LAND:
             self.LAND = True
-            print('landing')
+            self.get_logger().info('landing, trying to find Aruco Marker')
         # elif self.LAND and not self.END:
             # self.publishVehicleCmd(
             # VehicleCommand.VEHICLE_CMD_NAV_LAND, 0.0, 0.0)
-            # print('published command LAND')
+            # self.get_logger().debug('published command LAND')
             # self.LAND = False
             # self.END = True
 
-    def publishVehicleCmd(self, command, param1, param2=0.0, param3=0.0):
+    def publish_vehicle_cmd(self, command, param1, param2=0.0, param3=0.0):
         # publish specific commands, eg land, takeoff
         msg = VehicleCommand()
         msg.timestamp = self.timestamp
@@ -241,9 +239,9 @@ class FlyDrone(Node):
         msg.source_system = 1
         msg.source_component = 1
         msg.from_external = True
-        self.vehicleCmdPub.publish(msg)
+        self.vehicle_cmd_pub.publish(msg)
 
-    def publishOffboardControlMode(self):
+    def publish_offboard_control_mode(self):
         msg = OffboardControlMode()
         msg.timestamp = self.timestamp
         msg.position = False
@@ -251,9 +249,9 @@ class FlyDrone(Node):
         msg.acceleration = False
         msg.attitude = False
         msg.body_rate = False
-        self.offboardCtrlPub.publish(msg)
+        self.offboard_ctrl_pub.publish(msg)
 
-    def publishSetpoint(self, setpoint):
+    def publish_setpoint(self, setpoint):
         # unused values are set to NaN by default
         msg = TrajectorySetpoint()
         msg.timestamp = self.timestamp
@@ -261,28 +259,29 @@ class FlyDrone(Node):
         msg.x = float(setpoint[0])
         msg.y = float(setpoint[1])
         msg.z = float(setpoint[2])
-        msg.yaw = float(setpoint[3])
-        self.setpointPub.publish(msg)
+        # msg.yaw = float(setpoint[3])
+        self.setpoint_pub.publish(msg)
 
-    def goToGoal(self, goalSetpoint, k=1):
-        currPos = self.odom[0:3].copy()
-        goal = goalSetpoint[0:3].copy()
-        goToGoalVector = goal - currPos
-        nextPos = currPos + k * \
-            goToGoalVector / LA.norm(goToGoalVector)
-        nextYaw = k * (goalSetpoint[3]-self.odom[3])
-        nextSetpoint = np.hstack([nextPos, nextYaw])
-        return nextSetpoint
+    def go_to_goal(self, goal_setpoint, k=1):
+        curr_pos = self.odom.copy()
+        goal = goal_setpoint.copy()
+        g2g_vector = goal - curr_pos
+        next_pos = curr_pos + k * \
+            g2g_vector / la.norm(g2g_vector)
+        # nextYaw = k * (goal_setpoint[3]-self.odom[3])
+        # nextSetpoint = np.hstack([nextPos, nextYaw])
+        return next_pos
 
-    def vehicleStatus_callback(self, msg):
+    def vehicle_status_callback(self, msg):
         if msg.flag_armed:
             self.ARMED = True
         else:
             self.ARMED = False
 
     def odom_callback(self, msg):
-        eulerAngle = quat2euler(msg.q)
-        self.odom = np.array([msg.x, msg.y, msg.z, eulerAngle[2]])
+        # eulerAngle = quat2euler(msg.q)
+        # self.odom = np.array([msg.x, msg.y, msg.z, eulerAngle[2]])
+        self.odom = np.array([msg.x, msg.y, msg.z])
 
 
 def main(args=None):

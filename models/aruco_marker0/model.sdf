@@ -3,22 +3,21 @@
   <model name="aruco_marker0">
     <link name="link">
       <inertial>
-        <pose>0 0 0 0 0 0</pose>
-        <mass>0.001</mass>
+        <mass>1</mass>
         <inertia>
-          <ixx>3.7499999999999997e-06</ixx>
-          <ixy>0.0</ixy>
-          <ixz>0.0</ixz>
-          <iyy>1.8750008333333333e-06</iyy>
-          <iyz>0.0</iyz>
-          <izz>1.8750008333333333e-06</izz>
+          <ixx>0.166667</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.166667</iyy>
+          <iyz>0</iyz>
+          <izz>0.166667</izz>
         </inertia>
       </inertial>
       <visual name="visual">
         <pose>0 0 0.2 0 0 0</pose>
         <geometry>
           <box>
-            <size>0.55 0.55 0.01</size>
+            <size>0.8 0.8 0.1</size>
           </box>
         </geometry>
         <material>
@@ -33,7 +32,7 @@
         <pose>0 0 0.2 0 0 0</pose>
         <geometry>
           <box>
-            <size>0.55 0.55 0.01</size>
+            <size>0.8 0.8 0.1</size>
           </box>
         </geometry>
       </collision>

@@ -10,7 +10,7 @@ import numpy.linalg as la
 
 class OffboardDroneNode:
     def __init__(self):
-        rospy.init_node("offboard_node", anonymous=True, log_level=rospy.INFO)
+        rospy.init_node("offboard_node", log_level=rospy.INFO)
         rospy.loginfo("Starting OffboardDroneNode.")
 
         self.ARMED = False
@@ -33,7 +33,7 @@ class OffboardDroneNode:
 
         # control goals
         self.tolerance = 0.2
-        self.k_g2g = 0.8
+        self.k_g2g = 0.7
         self.step_cnt = -1
         self.mission = np.array([[0, 0, 2], [2, 1, 1], [-1, -2, 3], [0, 0, 5]])
         self.mission_steps = self.mission.shape[0]
@@ -83,13 +83,14 @@ class OffboardDroneNode:
         return la.norm(g2g_vect) <= self.tolerance
 
     def calc_path(self, k=1):
+        current_local_pos = self.current_local_pos.copy()
         if self.step_cnt == -1:
             self.step_cnt += 1
             rospy.loginfo(
                 f"next goal: {self.mission[self.step_cnt]}")
         if self.step_cnt < self.mission_steps:
             goal = self.mission[self.step_cnt, :]
-            g2g_vector = goal - self.current_local_pos
+            g2g_vector = goal - current_local_pos
             if self.is_at_goal(g2g_vector):
                 self.step_cnt += 1
                 if self.step_cnt < self.mission_steps:
@@ -98,7 +99,7 @@ class OffboardDroneNode:
         else:
             next_pos = None
             return next_pos
-        next_pos = self.current_local_pos + k*g2g_vector
+        next_pos = current_local_pos + k*g2g_vector/la.norm(g2g_vector)
         return next_pos
 
     def fly(self):

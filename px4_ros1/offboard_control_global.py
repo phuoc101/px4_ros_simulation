@@ -13,7 +13,7 @@ import numpy.linalg as la
 
 class OffboardDroneNode:
     def __init__(self):
-        rospy.init_node("offboard_node", anonymous=True, log_level=rospy.INFO)
+        rospy.init_node("offboard_node", log_level=rospy.INFO)
         rospy.loginfo("Starting OffboardDroneNode.")
 
         self.ARMED = False
@@ -39,7 +39,7 @@ class OffboardDroneNode:
         self.tolerance = 0.1
 
         # init some variables for subscribed topics and control
-        self.k_g2g = 2
+        self.k_g2g = 0.7
         self.initial_global_position = np.zeros(3)
         self.current_global_position = np.zeros(3)
         self.current_state = State()
@@ -96,27 +96,29 @@ class OffboardDroneNode:
         return la.norm(g2g_vect) <= self.tolerance
 
     def calc_path(self, k=1):
+        initial_global_position = self.initial_global_position.copy()
+        current_global_position = self.current_global_position.copy()
         if self.step_cnt == -1:
             self.step_cnt += 1
             rospy.loginfo(
-                f"next goal: {self.initial_global_position + self.mission[self.step_cnt]}")
+                f"next goal: {initial_global_position + self.mission[self.step_cnt]}")
         if self.step_cnt < self.mission_steps:
-            goal = self.initial_global_position + \
+            goal = initial_global_position + \
                 self.mission[self.step_cnt, :]
-            g2g_vector = goal - self.current_global_position
+            g2g_vector = goal - current_global_position
             if self.is_at_goal(g2g_vector):
                 self.step_cnt += 1
                 if self.step_cnt < self.mission_steps:
                     rospy.loginfo(
-                        f"next goal: {self.initial_global_position + self.mission[self.step_cnt]}")
+                        f"next goal: {initial_global_position + self.mission[self.step_cnt]}")
         else:
             next_pos = None
             return next_pos
-        next_pos = self.current_global_position + k*g2g_vector
+        next_pos = current_global_position + k*g2g_vector/la.norm(g2g_vector)
         # need to convert between ellipsoid and amsl level, because sensor measures ellipsoid
         # height but publish altitude in amsl (above mean sea level)
         ellipsoid_amsl_conv = geoid_height(
-            self.current_global_position[0], self.current_global_position[1])
+            current_global_position[0], current_global_position[1])
         next_pos[2] -= ellipsoid_amsl_conv
         return next_pos
 
