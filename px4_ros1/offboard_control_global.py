@@ -132,9 +132,10 @@ class OffboardDroneNode:
                 self.publish_setpoint(next_pos[0], next_pos[1], next_pos[2])
             elif not self.LAND:
                 self.LAND = True
+                self.land_vehicle()
                 rospy.loginfo("landing_vehicle...")
             elif self.current_global_position[2] >= self.initial_global_position[2] + self.tolerance:
-                self.land_vehicle()
+                rospy.logdebug("vehicle is moving down")
             else:
                 rospy.loginfo("landed, bye")
                 break

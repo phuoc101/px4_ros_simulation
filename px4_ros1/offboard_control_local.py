@@ -114,8 +114,9 @@ class OffboardDroneNode:
             elif not self.LAND:
                 self.LAND = True
                 rospy.loginfo("landing vehicle...")
-            elif np.abs(self.current_local_pos[2]) >= self.tolerance:
                 self.land_vehicle()
+            elif np.abs(self.current_local_pos[2]) >= self.tolerance:
+                rospy.logdebug("vehicle is moving down")
             else:
                 rospy.loginfo("landed, bye")
                 break
