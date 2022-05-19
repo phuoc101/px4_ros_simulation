@@ -86,7 +86,7 @@ class OffboardDroneNode:
         pose.pose.position.altitude = alt
         self.pos_pub.publish(pose)
 
-    def landing(self):
+    def land_vehicle(self):
         rospy.wait_for_service("mavros/cmd/land")
         landing_response = self.landing_client()
         if landing_response.success:
@@ -130,8 +130,9 @@ class OffboardDroneNode:
                 self.publish_setpoint(next_pos[0], next_pos[1], next_pos[2])
             elif not self.LAND:
                 self.LAND = True
+                rospy.loginfo("landing_vehicle...")
             elif self.current_global_position[2] >= self.initial_global_position[2] + self.tolerance:
-                self.landing()
+                self.land_vehicle()
             else:
                 rospy.loginfo("landed, bye")
                 break
