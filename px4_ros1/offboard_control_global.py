@@ -19,98 +19,98 @@ class OffboardDroneNode:
         self.ARMED = False
         self.LAND = False
 
-        self.state_sub = rospy.Subscriber(
-            "/mavros/state", State, self.state_callback)
-        self.global_pos_sub = rospy.Subscriber(
-            "/mavros/global_position/global", NavSatFix, self.global_pos_callback)
+        self.__state_sub = rospy.Subscriber(
+            "/mavros/state", State, self.__state_callback)
+        self.__global_pos_sub = rospy.Subscriber(
+            "/mavros/global_position/global", NavSatFix, self.__global_pos_callback)
         # altitude is measured as above mean sea level (AMSL)
-        self.pos_pub = rospy.Publisher(
+        self.__pos_pub = rospy.Publisher(
             "mavros/setpoint_position/global", GeoPoseStamped, queue_size=10)
-        self.arming_client = rospy.ServiceProxy(
+        self.__arming_client = rospy.ServiceProxy(
             "mavros/cmd/arming", CommandBool)
-        self.landing_client = rospy.ServiceProxy(
+        self.__landing_client = rospy.ServiceProxy(
             "mavros/cmd/land", CommandTOL)
-        self.set_mode_client = rospy.ServiceProxy("mavros/set_mode", SetMode)
+        self.__set_mode_client = rospy.ServiceProxy("mavros/set_mode", SetMode)
 
         # the setpoint publishing rate MUST be faster than 2Hz
-        self.rate = rospy.Rate(20.0)
+        self._rate = rospy.Rate(20.0)
 
         # control goals
-        self.tolerance = 0.1
+        self._tolerance = 0.1
 
         # init some variables for subscribed topics and control
-        self.k_g2g = 0.7
-        self.initial_global_position = np.zeros(3)
-        self.current_global_position = np.zeros(3)
-        self.current_state = State()
-        self.is_initialized_global_pos = False
-        self.step_cnt = -1
-        self.mission = np.array([[0, 0, 2], [0, 0, 1], [0, 0, 3]])
-        self.mission_steps = self.mission.shape[0]
+        self._k_g2g = 0.7
+        self.__initial_global_position = np.zeros(3)
+        self.__current_global_position = np.zeros(3)
+        self.__current_state = State()
+        self.__is_initialized_global_pos = False
+        self.__step_cnt = -1
+        self.__mission_offset = np.array([[0, 0, 2], [0, 0, 1], [0, 0, 3]])
+        self._mission = np.zeros(self.__mission_offset.shape)
+        self.__mission_steps = self._mission.shape[0]
 
-    def wait_for_FCU_connection(self):
-        while not rospy.is_shutdown() and not self.current_state.connected:
-            self.rate.sleep()
+    def __wait_for_FCU_connection(self):
+        while not rospy.is_shutdown() and not self.__current_state.connected:
+            self._rate.sleep()
 
     # altitude is measured as above WGS-84 ellipsoid
-    def global_pos_callback(self, msg):
-        self.current_global_position = np.array(
+    def __global_pos_callback(self, msg):
+        self.__current_global_position = np.array(
             [msg.latitude, msg.longitude, msg.altitude])
-        if not self.is_initialized_global_pos:
-            self.initial_global_position = self.current_global_position
-            self.is_initialized_global_pos = True
+        if not self.__is_initialized_global_pos:
+            self.__initial_global_position = self.__current_global_position
+            self._mission = self.__initial_global_position + self.__mission_offset
+            self.__is_initialized_global_pos = True
 
-    def state_callback(self, msg):
-        self.current_state = msg
+    def __state_callback(self, msg):
+        self.__current_state = msg
         self.ARMED = msg.armed
 
-    def arm_vehicle(self):
-        if self.current_state.mode != "OFFBOARD":
+    def __arm_vehicle(self):
+        if self.__current_state.mode != "OFFBOARD":
             rospy.wait_for_service('mavros/set_mode')
             rospy.logdebug("Trying to enable offboard...")
-            set_mode_response = self.set_mode_client(custom_mode="OFFBOARD")
+            set_mode_response = self.__set_mode_client(custom_mode="OFFBOARD")
             if set_mode_response.mode_sent:
                 rospy.logdebug("Offboard enabled")
-        elif not self.current_state.armed:
+        elif not self.__current_state.armed:
             rospy.wait_for_service("mavros/cmd/arming")
-            arming_response = self.arming_client(value=True)
+            arming_response = self.__arming_client(value=True)
             if arming_response.success:
                 rospy.logdebug("Vehicle armed")
 
-    def publish_setpoint(self, lat, long, alt):
+    def __publish_setpoint(self, lat, long, alt):
         pose = GeoPoseStamped()
         pose.header = Header()
         pose.header.stamp = rospy.Time.now()
         pose.pose.position.latitude = lat
         pose.pose.position.longitude = long
         pose.pose.position.altitude = alt
-        self.pos_pub.publish(pose)
+        self.__pos_pub.publish(pose)
 
     def land_vehicle(self):
         rospy.wait_for_service("mavros/cmd/land")
-        landing_response = self.landing_client()
+        landing_response = self.__landing_client()
         if landing_response.success:
             rospy.logdebug("Published command landing")
 
-    def is_at_goal(self, g2g_vect):
-        return la.norm(g2g_vect) <= self.tolerance
+    def __is_at_goal(self, g2g_vect):
+        return la.norm(g2g_vect) <= self._tolerance
 
-    def calc_path(self, k=1):
-        initial_global_position = self.initial_global_position.copy()
-        current_global_position = self.current_global_position.copy()
-        if self.step_cnt == -1:
-            self.step_cnt += 1
-            rospy.loginfo(
-                f"next goal: {initial_global_position + self.mission[self.step_cnt]}")
-        if self.step_cnt < self.mission_steps:
-            goal = initial_global_position + \
-                self.mission[self.step_cnt, :]
-            g2g_vector = goal - current_global_position
-            if self.is_at_goal(g2g_vector):
-                self.step_cnt += 1
-                if self.step_cnt < self.mission_steps:
+    def __calc_path(self, k=1):
+        current_global_position = self.__current_global_position.copy()
+        if self.__step_cnt == -1:
+            self.__step_cnt += 1
+            rospy.loginfo(f"Start mission")
+            rospy.loginfo(f"next goal: {self._mission[self.__step_cnt]}")
+        if self.__step_cnt < self.__mission_steps:
+            g2g_vector = self._mission[self.__step_cnt, :] - \
+                current_global_position
+            if self.__is_at_goal(g2g_vector):
+                self.__step_cnt += 1
+                if self.__step_cnt < self.__mission_steps:
                     rospy.loginfo(
-                        f"next goal: {initial_global_position + self.mission[self.step_cnt]}")
+                        f"next goal: {self._mission[self.__step_cnt]}")
         else:
             next_pos = None
             return next_pos
@@ -123,23 +123,23 @@ class OffboardDroneNode:
         return next_pos
 
     def fly(self):
-        self.wait_for_FCU_connection()
+        self.__wait_for_FCU_connection()
         while not rospy.is_shutdown():
             if not self.LAND:
-                self.arm_vehicle()
-                next_pos = self.calc_path(k=self.k_g2g)
+                self.__arm_vehicle()
+                next_pos = self.__calc_path(k=self._k_g2g)
             if next_pos is not None:
-                self.publish_setpoint(next_pos[0], next_pos[1], next_pos[2])
+                self.__publish_setpoint(next_pos[0], next_pos[1], next_pos[2])
             elif not self.LAND:
                 self.LAND = True
                 self.land_vehicle()
                 rospy.loginfo("landing_vehicle...")
-            elif self.current_global_position[2] >= self.initial_global_position[2] + self.tolerance:
+            elif self.__current_global_position[2] >= self.__initial_global_position[2] + self._tolerance:
                 rospy.logdebug("vehicle is moving down")
             else:
                 rospy.loginfo("landed, bye")
                 break
-            self.rate.sleep()
+            self._rate.sleep()
 
 
 if __name__ == "__main__":
